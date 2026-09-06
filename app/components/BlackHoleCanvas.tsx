@@ -76,7 +76,7 @@ export const BlackHoleCanvas: React.FC = () => {
       45,
       window.innerWidth / window.innerHeight,
       0.1,
-      2500
+      3000
     );
 
     const renderer = new THREE.WebGLRenderer({
@@ -88,7 +88,7 @@ export const BlackHoleCanvas: React.FC = () => {
     const pixelRatio = Math.min(window.devicePixelRatio, 2);
     renderer.setPixelRatio(pixelRatio);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
+    renderer.toneMappingExposure = 1.05;
     container.appendChild(renderer.domElement);
 
     // 2. Post-Processing Pipeline: RenderPass -> UnrealBloomPass -> GravitationalLensShader
@@ -96,23 +96,24 @@ export const BlackHoleCanvas: React.FC = () => {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    // High-end cinematic optical bloom for incandescent accretion disk & 5D tesseract strings
+    // Controlled cinematic bloom: tight luminous glow around the disk edge without washing out the black hole
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      1.15, // strength
-      0.65, // radius
-      0.22  // threshold
+      0.65, // Strength: crisp and luminous, not a foggy white smudge
+      0.35, // Radius: tight glow around hot elements
+      0.45  // Threshold: only the incandescent photon ring and hottest plasma glow
     );
     composer.addPass(bloomPass);
 
-    // Gravitational Lensing & Einstein Ring deflection pass
+    // Gravitational Lensing & Event Horizon Shadow Absorption Pass (Runs AFTER bloom to guarantee pure black hole center)
     const lensPass = new ShaderPass(GravitationalLensShader);
     lensPass.uniforms.uResolution.value.set(window.innerWidth * pixelRatio, window.innerHeight * pixelRatio);
     lensPass.uniforms.uAspect.value = window.innerWidth / window.innerHeight;
     composer.addPass(lensPass);
 
-    // 3. Assemble Scene Components
-    const starfield = new Starfield(14000, 750);
+    // 3. Assemble Scene Components with explicit render orders
+    const starfield = new Starfield(14000, 800);
+    starfield.group.renderOrder = 0;
     scene.add(starfield.group);
 
     const blackHole = new BlackHoleScene();
@@ -129,8 +130,7 @@ export const BlackHoleCanvas: React.FC = () => {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       gsap.killTweensOf(controllerRef.current);
-      // Infinite scroll delta: normalized and smooth
-      const delta = e.deltaY * 0.00048;
+      const delta = e.deltaY * 0.00045;
       controllerRef.current.addScrollDelta(delta);
     };
 
@@ -214,24 +214,26 @@ export const BlackHoleCanvas: React.FC = () => {
       // Update camera flight trajectory
       const currentFlightMetrics = controllerRef.current.update(camera, deltaTime);
 
-      // Black Hole and Screen-Space Lensing Calculations
+      // Rotationally invariant, mathematically exact projected screen coordinates
       tempV3.set(0, 0, 0);
       tempV3.project(camera);
       const screenX = (tempV3.x + 1.0) / 2.0;
       const screenY = (tempV3.y + 1.0) / 2.0;
       const isBehind = tempV3.z > 1.0;
 
-      tempV3.set(blackHole.rs, 0, 0);
-      tempV3.project(camera);
-      const edgeScreenX = (tempV3.x + 1.0) / 2.0;
-      const screenRadius = isBehind ? 0.0 : Math.abs(edgeScreenX - screenX);
+      const camDist = camera.position.length();
+      const fovRad = (camera.fov * Math.PI) / 180.0;
+      // Exact screen shadow radius
+      const screenRadius = (!isBehind && camDist > blackHole.shadowRadius)
+        ? Math.min(0.5, (blackHole.shadowRadius / camDist) / (2.0 * Math.tan(fovRad / 2.0)))
+        : 0.0;
 
-      // Update screen-space lensing uniforms
+      // Smooth lensing strength fade
+      const lensStrength = Math.max(0.0, Math.min(1.0, (0.72 - currentFlightMetrics.progress) / 0.12));
+
       lensPass.uniforms.uBlackHoleScreenPos.value.set(screenX, screenY);
-      lensPass.uniforms.uBlackHoleScreenRadius.value =
-        currentFlightMetrics.progress > 0.65 ? 0.0 : Math.min(0.45, screenRadius);
-      lensPass.uniforms.uLensingStrength.value =
-        currentFlightMetrics.progress > 0.6 ? 0.0 : 1.0;
+      lensPass.uniforms.uBlackHoleScreenRadius.value = screenRadius;
+      lensPass.uniforms.uLensingStrength.value = lensStrength;
 
       // Update 3D components
       const velocityDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -303,7 +305,7 @@ export const BlackHoleCanvas: React.FC = () => {
       {/* Clean Cinematic Subtitle Indicator */}
       <StoryOverlays metrics={metrics} />
 
-      {/* Sleek Framing Overlay (Unwanted bulky metrics text removed) */}
+      {/* Sleek Framing Overlay */}
       <TelemetryHUD
         metrics={metrics}
         audioActive={audioActive}

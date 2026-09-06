@@ -10,8 +10,7 @@ export class BlackHoleScene {
   public group: THREE.Group;
   public eventHorizon: THREE.Mesh;
   public accretionDisk: THREE.Mesh;
-  public lensingArchTop: THREE.Mesh;
-  public lensingArchBottom: THREE.Mesh;
+  public lensingArch: THREE.Mesh;
   public photonRing: THREE.Mesh;
   public northJet: THREE.Mesh;
   public southJet: THREE.Mesh;
@@ -19,35 +18,61 @@ export class BlackHoleScene {
   public volumetricRings: THREE.Group;
 
   private diskMaterial: THREE.ShaderMaterial;
-  private haloTopMaterial: THREE.ShaderMaterial;
-  private haloBottomMaterial: THREE.ShaderMaterial;
+  private haloMaterial: THREE.ShaderMaterial;
   private photonMaterial: THREE.ShaderMaterial;
   private northJetMaterial: THREE.ShaderMaterial;
   private southJetMaterial: THREE.ShaderMaterial;
 
   public readonly rs = 1.0; // Schwarzschild radius in scene units
+  public readonly shadowRadius = 2.4; // Apparent gravitational shadow radius
 
   constructor() {
     this.group = new THREE.Group();
 
-    // 1. Event Horizon: Perfectly absorbing black sphere at r = rs
-    const horizonGeo = new THREE.SphereGeometry(this.rs, 64, 64);
+    // 1. Event Horizon Shadow: Pure ink-black sphere of apparent shadow radius
+    const horizonGeo = new THREE.SphereGeometry(this.shadowRadius, 64, 64);
     const horizonMat = new THREE.MeshBasicMaterial({
       color: 0x000000,
-      reflectivity: 0,
+      depthWrite: true,
     });
     this.eventHorizon = new THREE.Mesh(horizonGeo, horizonMat);
+    this.eventHorizon.renderOrder = 2;
     this.group.add(this.eventHorizon);
 
-    // 2. Photon Ring: Razor-sharp light sphere at r = 1.505 * rs
-    const photonGeo = new THREE.SphereGeometry(this.rs * 1.505, 64, 64);
+    // 2. Kip Thorne Gravitational Lensing Halo (Curved arch surrounding the shadow)
+    const haloInner = this.shadowRadius * 1.01;
+    const haloOuter = this.shadowRadius * 2.15;
+    const haloGeo = new THREE.RingGeometry(haloInner, haloOuter, 128, 32);
+    this.haloMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uInnerRadius: { value: haloInner },
+        uOuterRadius: { value: haloOuter },
+        uDiskColorCore: { value: new THREE.Color(1.0, 0.95, 0.85) },
+        uDiskColorMid: { value: new THREE.Color(1.0, 0.52, 0.10) },
+        uDiskColorOuter: { value: new THREE.Color(0.72, 0.15, 0.02) },
+        uCameraPosition: { value: new THREE.Vector3(0, 5, 25) },
+      },
+      vertexShader: LensingHaloShader.vertexShader,
+      fragmentShader: LensingHaloShader.fragmentShader,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.lensingArch = new THREE.Mesh(haloGeo, this.haloMaterial);
+    this.lensingArch.renderOrder = 1;
+    this.group.add(this.lensingArch);
+
+    // 3. Photon Ring: Razor-sharp incandescent loop hugging the shadow perimeter
+    const photonGeo = new THREE.SphereGeometry(this.shadowRadius * 1.008, 64, 64);
     this.photonMaterial = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uRadius: { value: 1.505 },
-        uWidth: { value: 0.08 },
-        uColor: { value: new THREE.Color(1.0, 0.98, 0.92) },
-        uGlowColor: { value: new THREE.Color(0.4, 0.75, 1.0) },
+        uRadius: { value: this.shadowRadius * 1.008 },
+        uWidth: { value: 0.04 },
+        uColor: { value: new THREE.Color(1.0, 0.96, 0.88) },
+        uGlowColor: { value: new THREE.Color(0.4, 0.7, 1.0) },
         uCameraPosition: { value: new THREE.Vector3(0, 5, 25) },
       },
       vertexShader: PhotonRingShader.vertexShader,
@@ -58,11 +83,12 @@ export class BlackHoleScene {
       depthWrite: false,
     });
     this.photonRing = new THREE.Mesh(photonGeo, this.photonMaterial);
+    this.photonRing.renderOrder = 3;
     this.group.add(this.photonRing);
 
-    // 3. Primary Equatorial Accretion Disk
-    const diskInner = 2.4 * this.rs;
-    const diskOuter = 14.5 * this.rs;
+    // 4. Primary Equatorial Accretion Disk (Begins just outside the shadow)
+    const diskInner = this.shadowRadius * 1.03;
+    const diskOuter = 13.5 * this.rs;
     const diskGeo = new THREE.RingGeometry(diskInner, diskOuter, 128, 48);
     diskGeo.rotateX(-Math.PI / 2);
 
@@ -71,12 +97,12 @@ export class BlackHoleScene {
         uTime: { value: 0 },
         uInnerRadius: { value: diskInner },
         uOuterRadius: { value: diskOuter },
-        uBlackHoleRadius: { value: this.rs },
-        uDiskColorCore: { value: new THREE.Color(1.0, 0.96, 0.88) },
-        uDiskColorMid: { value: new THREE.Color(1.0, 0.58, 0.12) },
-        uDiskColorOuter: { value: new THREE.Color(0.85, 0.18, 0.03) },
-        uDopplerStrength: { value: 1.4 },
-        uTemperature: { value: 1.15 },
+        uBlackHoleRadius: { value: this.shadowRadius },
+        uDiskColorCore: { value: new THREE.Color(1.0, 0.95, 0.85) },
+        uDiskColorMid: { value: new THREE.Color(1.0, 0.52, 0.10) },
+        uDiskColorOuter: { value: new THREE.Color(0.72, 0.15, 0.02) },
+        uDopplerStrength: { value: 1.25 },
+        uTemperature: { value: 1.0 },
         uCameraPosition: { value: new THREE.Vector3(0, 5, 25) },
       },
       vertexShader: AccretionDiskShader.vertexShader,
@@ -86,65 +112,20 @@ export class BlackHoleScene {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-
     this.accretionDisk = new THREE.Mesh(diskGeo, this.diskMaterial);
+    this.accretionDisk.renderOrder = 4;
     this.group.add(this.accretionDisk);
 
-    // 4. Kip Thorne Gravitational Lensing Arches:
-    // Top arch (secondary image of back disk bent over north pole)
-    const haloGeoTop = new THREE.RingGeometry(1.15 * this.rs, 4.5 * this.rs, 128, 32);
-    this.haloTopMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uInnerRadius: { value: 1.15 * this.rs },
-        uOuterRadius: { value: 4.5 * this.rs },
-        uDiskColorCore: { value: new THREE.Color(1.0, 0.96, 0.88) },
-        uDiskColorMid: { value: new THREE.Color(1.0, 0.58, 0.12) },
-        uDiskColorOuter: { value: new THREE.Color(0.85, 0.18, 0.03) },
-        uCameraPosition: { value: new THREE.Vector3(0, 5, 25) },
-      },
-      vertexShader: LensingHaloShader.vertexShader,
-      fragmentShader: LensingHaloShader.fragmentShader,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    this.lensingArchTop = new THREE.Mesh(haloGeoTop, this.haloTopMaterial);
-    this.group.add(this.lensingArchTop);
-
-    // Bottom arch (tertiary image of back disk bent under south pole)
-    const haloGeoBottom = new THREE.RingGeometry(1.12 * this.rs, 3.8 * this.rs, 128, 32);
-    this.haloBottomMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uInnerRadius: { value: 1.12 * this.rs },
-        uOuterRadius: { value: 3.8 * this.rs },
-        uDiskColorCore: { value: new THREE.Color(1.0, 0.96, 0.88) },
-        uDiskColorMid: { value: new THREE.Color(1.0, 0.58, 0.12) },
-        uDiskColorOuter: { value: new THREE.Color(0.85, 0.18, 0.03) },
-        uCameraPosition: { value: new THREE.Vector3(0, 5, 25) },
-      },
-      vertexShader: LensingHaloShader.vertexShader,
-      fragmentShader: LensingHaloShader.fragmentShader,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    this.lensingArchBottom = new THREE.Mesh(haloGeoBottom, this.haloBottomMaterial);
-    this.group.add(this.lensingArchBottom);
-
-    // 5. Relativistic Polar Jets
-    const jetGeo = new THREE.CylinderGeometry(0.08, 2.5, 32, 32, 1, true);
-    jetGeo.translate(0, 16, 0);
+    // 5. Subtle Relativistic Polar Jets (Faint ethereal wisps, never blinding)
+    const jetGeo = new THREE.CylinderGeometry(0.06, 1.8, 28, 32, 1, true);
+    jetGeo.translate(0, 14, 0);
 
     this.northJetMaterial = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uJetLength: { value: 32.0 },
-        uJetCoreColor: { value: new THREE.Color(0.5, 0.85, 1.0) },
-        uJetGlowColor: { value: new THREE.Color(0.15, 0.35, 0.95) },
+        uJetLength: { value: 28.0 },
+        uJetCoreColor: { value: new THREE.Color(0.3, 0.6, 1.0) },
+        uJetGlowColor: { value: new THREE.Color(0.1, 0.2, 0.7) },
       },
       vertexShader: PolarJetShader.vertexShader,
       fragmentShader: PolarJetShader.fragmentShader,
@@ -154,14 +135,15 @@ export class BlackHoleScene {
       depthWrite: false,
     });
     this.northJet = new THREE.Mesh(jetGeo, this.northJetMaterial);
+    this.northJet.renderOrder = 4;
     this.group.add(this.northJet);
 
     this.southJetMaterial = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uJetLength: { value: 32.0 },
-        uJetCoreColor: { value: new THREE.Color(0.5, 0.85, 1.0) },
-        uJetGlowColor: { value: new THREE.Color(0.15, 0.35, 0.95) },
+        uJetLength: { value: 28.0 },
+        uJetCoreColor: { value: new THREE.Color(0.3, 0.6, 1.0) },
+        uJetGlowColor: { value: new THREE.Color(0.1, 0.2, 0.7) },
       },
       vertexShader: PolarJetShader.vertexShader,
       fragmentShader: PolarJetShader.fragmentShader,
@@ -172,19 +154,21 @@ export class BlackHoleScene {
     });
     this.southJet = new THREE.Mesh(jetGeo, this.southJetMaterial);
     this.southJet.rotation.x = Math.PI;
+    this.southJet.renderOrder = 4;
     this.group.add(this.southJet);
 
-    // 6. Swirling Relativistic Plasma Sparks & Glowing Embers
-    this.accretionParticles = this.createAccretionSparks(2400, diskInner, diskOuter);
+    // 6. Relativistic Accretion Sparks outside shadow
+    this.accretionParticles = this.createAccretionSparks(2000, diskInner, diskOuter);
+    this.accretionParticles.renderOrder = 5;
     this.group.add(this.accretionParticles);
 
-    // 7. Volumetric Glowing Gas Rings
+    // 7. Volumetric Ambient Dust Rings
     this.volumetricRings = this.createVolumetricRings(diskInner, diskOuter);
     this.group.add(this.volumetricRings);
 
-    // Default orbital tilt
-    this.group.rotation.z = 0.08;
-    this.group.rotation.x = 0.18;
+    // Orbital inclination
+    this.group.rotation.z = 0.06;
+    this.group.rotation.x = 0.16;
   }
 
   private createVolumetricRings(rMin: number, rMax: number): THREE.Group {
@@ -196,15 +180,16 @@ export class BlackHoleScene {
       const geo = new THREE.RingGeometry(r1, r2, 64);
       geo.rotateX(-Math.PI / 2);
       const mat = new THREE.MeshBasicMaterial({
-        color: i === 0 ? 0xfff0d0 : i === 1 ? 0xff8820 : 0xd03008,
+        color: i === 0 ? 0xffdfaa : i === 1 ? 0xff7711 : 0xb82805,
         transparent: true,
-        opacity: 0.04,
+        opacity: 0.035,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = (i - 1) * 0.05;
+      mesh.position.y = (i - 1) * 0.04;
+      mesh.renderOrder = 4;
       group.add(mesh);
     }
     return group;
@@ -222,7 +207,7 @@ export class BlackHoleScene {
       const u = Math.random();
       const r = rMin + (rMax - rMin) * Math.pow(u, 0.65);
       const theta = Math.random() * 2.0 * Math.PI;
-      const y = (Math.random() - 0.5) * 0.3 * (r / rMin);
+      const y = (Math.random() - 0.5) * 0.25 * (r / rMin);
 
       positions[i * 3] = r * Math.cos(theta);
       positions[i * 3 + 1] = y;
@@ -230,24 +215,24 @@ export class BlackHoleScene {
 
       radii[i] = r;
       initialThetas[i] = theta;
-      speeds[i] = 3.8 / Math.pow(r, 1.25);
+      speeds[i] = 3.5 / Math.pow(r, 1.25);
 
       const tempT = (r - rMin) / (rMax - rMin);
       if (tempT < 0.25) {
-        colors[i * 3] = 0.98;
-        colors[i * 3 + 1] = 0.98;
-        colors[i * 3 + 2] = 1.0;
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 0.95;
+        colors[i * 3 + 2] = 0.88;
       } else if (tempT < 0.65) {
         colors[i * 3] = 1.0;
-        colors[i * 3 + 1] = 0.65;
-        colors[i * 3 + 2] = 0.18;
+        colors[i * 3 + 1] = 0.58;
+        colors[i * 3 + 2] = 0.12;
       } else {
-        colors[i * 3] = 0.88;
-        colors[i * 3 + 1] = 0.22;
-        colors[i * 3 + 2] = 0.04;
+        colors[i * 3] = 0.82;
+        colors[i * 3 + 1] = 0.18;
+        colors[i * 3 + 2] = 0.03;
       }
 
-      sizes[i] = 2.2 + Math.random() * 4.0;
+      sizes[i] = 2.0 + Math.random() * 3.5;
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -278,12 +263,12 @@ export class BlackHoleScene {
           float angle = initialTheta - uTime * speed;
           vec3 pos = vec3(
             radius * cos(angle),
-            position.y + sin(uTime * 2.2 + radius) * 0.06,
+            position.y + sin(uTime * 2.0 + radius) * 0.04,
             radius * sin(angle)
           );
 
           vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-          gl_PointSize = size * (260.0 / -mvPosition.z);
+          gl_PointSize = size * (240.0 / -mvPosition.z);
           gl_Position = projectionMatrix * mvPosition;
         }
       `,
@@ -294,7 +279,7 @@ export class BlackHoleScene {
           float dist = length(coord);
           if (dist > 0.5) discard;
           float intensity = exp(-dist * dist * 16.0);
-          gl_FragColor = vec4(vColor * 1.6, intensity);
+          gl_FragColor = vec4(vColor * 1.5, intensity);
         }
       `,
       transparent: true,
@@ -311,11 +296,8 @@ export class BlackHoleScene {
     this.diskMaterial.uniforms.uTime.value = time;
     this.diskMaterial.uniforms.uCameraPosition.value.set(camPos.x, camPos.y, camPos.z);
 
-    this.haloTopMaterial.uniforms.uTime.value = time;
-    this.haloTopMaterial.uniforms.uCameraPosition.value.set(camPos.x, camPos.y, camPos.z);
-
-    this.haloBottomMaterial.uniforms.uTime.value = time;
-    this.haloBottomMaterial.uniforms.uCameraPosition.value.set(camPos.x, camPos.y, camPos.z);
+    this.haloMaterial.uniforms.uTime.value = time;
+    this.haloMaterial.uniforms.uCameraPosition.value.set(camPos.x, camPos.y, camPos.z);
 
     this.photonMaterial.uniforms.uTime.value = time;
     this.photonMaterial.uniforms.uCameraPosition.value.set(camPos.x, camPos.y, camPos.z);
@@ -325,13 +307,10 @@ export class BlackHoleScene {
 
     (this.accretionParticles.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
 
-    // Align the gravitational arches with the camera orientation
-    this.lensingArchTop.quaternion.copy(camera.quaternion);
-    this.lensingArchBottom.quaternion.copy(camera.quaternion);
-    // Invert the bottom arch to arc gracefully under the south pole
-    this.lensingArchBottom.rotation.z += Math.PI;
+    // Billboard the lensing halo without Euler angle mutation
+    this.lensingArch.lookAt(camPos);
 
     // Slow rotation of volumetric gas
-    this.volumetricRings.rotation.y = time * 0.1;
+    this.volumetricRings.rotation.y = time * 0.08;
   }
 }

@@ -1,15 +1,15 @@
 import * as THREE from 'three';
 
-// Screen-space Gravitational Lensing and Einstein Ring distortion shader
+// Gravitational Lensing & Event Horizon Shadow Absorption Shader
 export const GravitationalLensShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uResolution: { value: new THREE.Vector2(1920, 1080) },
     uBlackHoleScreenPos: { value: new THREE.Vector2(0.5, 0.5) },
-    uBlackHoleScreenRadius: { value: 0.12 }, // Normalized screen radius
+    uBlackHoleScreenRadius: { value: 0.12 },
     uLensingStrength: { value: 1.0 },
     uAspect: { value: 16 / 9 },
-    uChromaticDispersion: { value: 0.015 },
+    uChromaticDispersion: { value: 0.01 },
     uActive: { value: 1.0 },
   },
 
@@ -34,47 +34,55 @@ export const GravitationalLensShader = {
     varying vec2 vUv;
 
     void main() {
-      if (uActive < 0.5 || uBlackHoleScreenRadius <= 0.001) {
+      if (uActive < 0.01) {
         gl_FragColor = texture2D(tDiffuse, vUv);
         return;
       }
 
-      // Aspect ratio correction for circular deflection
       vec2 aspectVec = vec2(uAspect, 1.0);
       vec2 delta = (vUv - uBlackHoleScreenPos) * aspectVec;
       float dist = length(delta);
-
-      // Apparent shadow radius (b_crit ~ 2.6 * r_s for Schwarzschild)
       float rs = uBlackHoleScreenRadius;
-      float rShadow = rs * 1.05;
 
-      // When outside the event horizon shadow, apply gravitational deflection
-      if (dist > rShadow) {
-        // Kip Thorne deflection approximation: alpha ~ 2 * rs / (dist - rs * 0.8)
-        float factor = (rs * rs * 0.75 * uLensingStrength) / max(0.001, (dist - rs * 0.75));
-        vec2 dir = normalize(delta) / aspectVec;
+      vec3 col;
 
-        // Gravitational chromatic dispersion (relativistic frequency shift across light cone)
-        vec2 uvR = vUv - dir * (factor * (1.0 - uChromaticDispersion));
-        vec2 uvG = vUv - dir * factor;
-        vec2 uvB = vUv - dir * (factor * (1.0 + uChromaticDispersion));
+      if (uLensingStrength > 0.001 && rs > 0.002) {
+        // Continuous Einstein gravitational deflection
+        float softenedDist = sqrt(dist * dist + rs * rs * 0.25);
+        float deflection = (rs * rs * 0.65 * uLensingStrength) / softenedDist;
+        
+        // Softly damp deflection inside the core to prevent UV inversion
+        float coreDamp = smoothstep(0.0, rs * 0.9, dist);
+        deflection *= coreDamp;
 
-        float rCol = texture2D(tDiffuse, clamp(uvR, 0.0, 1.0)).r;
-        float gCol = texture2D(tDiffuse, clamp(uvG, 0.0, 1.0)).g;
-        float bCol = texture2D(tDiffuse, clamp(uvB, 0.0, 1.0)).b;
+        vec2 dir = (dist > 0.0001) ? (delta / dist) : vec2(0.0);
+        vec2 offset = (dir / aspectVec) * deflection;
 
-        // Enhanced brightness at the Einstein Ring (caustic amplification)
-        float einsteinRingDist = abs(dist - rs * 1.6);
-        float ringCaustic = exp(-einsteinRingDist * einsteinRingDist * 180.0) * 0.45;
+        // Gravitational chromatic dispersion across light cones
+        vec2 uvR = vUv - offset * (1.0 - uChromaticDispersion);
+        vec2 uvG = vUv - offset;
+        vec2 uvB = vUv - offset * (1.0 + uChromaticDispersion);
 
-        vec3 color = vec3(rCol, gCol, bCol) + vec3(1.0, 0.9, 0.7) * ringCaustic;
-        gl_FragColor = vec4(color, 1.0);
+        col.r = texture2D(tDiffuse, clamp(uvR, 0.0, 1.0)).r;
+        col.g = texture2D(tDiffuse, clamp(uvG, 0.0, 1.0)).g;
+        col.b = texture2D(tDiffuse, clamp(uvB, 0.0, 1.0)).b;
+
+        // EVENT HORIZON SHADOW ABSORPTION MASK:
+        // Any light inside the apparent shadow radius is swallowed by the black hole!
+        // This ensures the central black hole is a pure, deep, razor-sharp black void
+        // and cuts away any bloom fog that bleeds over the center.
+        float shadowAlpha = smoothstep(rs * 0.94, rs * 1.02, dist);
+        col *= shadowAlpha;
       } else {
-        // Inside the event horizon boundary: sample texture with smooth black absorption falloff
-        float shadowEdge = smoothstep(rs * 0.85, rShadow, dist);
-        vec4 originalColor = texture2D(tDiffuse, vUv);
-        gl_FragColor = mix(vec4(0.0, 0.0, 0.0, 1.0), originalColor, shadowEdge * 0.35);
+        col = texture2D(tDiffuse, vUv).rgb;
       }
+
+      // Subtle cinematic vignette
+      vec2 vigCoord = (vUv - 0.5) * 1.35;
+      float vignette = 1.0 - dot(vigCoord, vigCoord) * 0.28;
+      col *= clamp(vignette, 0.72, 1.0);
+
+      gl_FragColor = vec4(col, 1.0);
     }
   `
 };
